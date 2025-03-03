@@ -10,6 +10,7 @@ Options:
     -r, --recovery [y/N]   Compile kernel for an Android Recovery
     -c, --ccache [y/N]     Use ccache to cache compilations
     -f, --freq [value]     Set CPU frequency (underclocked, overclocked, original "if want to add yourself its in Freq dir")
+    -g, --governor [value] Set CPU governor (performance, energystep, conservative "PLEASE DONT USE CONSERVATIVE ON UNDERCLOKED UNLESS BATTERLIFE ONLY MATTERS!!!")
 EOF
 }
 
@@ -35,7 +36,11 @@ while [[ $# -gt 0 ]]; do
             FREQ_OPTION="$2"
             shift 2
             ;;
-        *)\
+        --governor|-g)
+            GOVERNOR_OPTION="$2"
+            shift 2
+            ;;
+        *)
             unset_flags
             exit 1
             ;;
@@ -144,6 +149,26 @@ if [[ -n "$FREQ_OPTION" ]]; then
         exit 1
     fi
 fi
+
+# Handle Governor Option
+if [[ -n "$GOVERNOR_OPTION" ]]; then
+    if [[ "$GOVERNOR_OPTION" == "performance" || "$GOVERNOR_OPTION" == "energystep" || "$GOVERNOR_OPTION" == "conservative" ]]; then
+        echo "Switching CPU governor to $GOVERNOR_OPTION..."
+        ./toggle_governor.sh "$GOVERNOR_OPTION"
+        if [[ $? -ne 0 ]]; then
+            echo "Error: Failed to switch governor."
+            exit 1
+        fi
+    else
+        echo "Error: Invalid governor option. Use 'performance', 'energystep', or 'conservative'."
+        exit 1
+    fi
+else
+    echo "Using default CPU governor: performance"
+    ./toggle_governor.sh "energystep"
+fi
+
+
 
 rm -rf arch/arm64/configs/temp_defconfig
 rm -rf build/out/$MODEL
