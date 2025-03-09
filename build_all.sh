@@ -7,7 +7,7 @@ rm -rf build/out/all/
 
 for device in $(find . -iname "*eyeless_*" | sed -E 's/.*eyeless_([^_]*)(_defconfig|defconfig).*/\1/'); do
     echo "Building for device: $device"
-    ./build.sh -m "$device" -k y -c y
+    ./build.sh -m "$device" -k y $BUILD_FLAGS
     
     # Check if build was successful
     if [ $? -ne 0 ]; then
