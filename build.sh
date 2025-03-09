@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CONFIG_SAVE_FILE="saved_options_defconfig"
-TOGGLE_FILE="use_extra_configs.toggle"  # Toggle file to control usage
+TOGGLE_FILE="use_extra_configs.toggle"
 
 unset_flags() {
     cat << EOF
@@ -11,16 +11,14 @@ Options:
     -k, --ksu [y/N]        Include KernelSU
     -r, --recovery [y/N]   Compile kernel for an Android Recovery
     -c, --ccache [y/N]     Use ccache to cache compilations
-    -f, --freq [value]     Set CPU frequency (underclocked, overclocked, original "if want to add yourself its in Freq dir")
+    -f, --freq [value]     Set CPU frequency (underclocked, overclocked, original)
     -e, --extra-configs    Enable extra configuration selection
     --toggle               Toggle the usage of extra configurations (change between 0 and 1)
 EOF
     exit 1
 }
 
-# If no arguments are passed, show help and exit
 if [[ $# -eq 0 ]]; then
-    # Check the state of the toggle file and display if it's "on" or "off"
     if [[ -f "$TOGGLE_FILE" && $(cat "$TOGGLE_FILE") -eq 1 ]]; then
         echo "-----------------------------------------------"
         echo "EXTRA CONFIGURATIONS: ON"
@@ -63,7 +61,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --toggle)
             if [[ -f "$TOGGLE_FILE" ]]; then
-                # Toggle between 0 and 1
                 if [[ $(cat "$TOGGLE_FILE") -eq 1 ]]; then
                     echo "0" > "$TOGGLE_FILE"
                     echo "Toggled to OFF (extra configurations disabled)"
@@ -72,11 +69,10 @@ while [[ $# -gt 0 ]]; do
                     echo "Toggled to ON (extra configurations enabled)"
                 fi
             else
-                # If the toggle file doesn't exist, create it and set to 1
                 echo "1" > "$TOGGLE_FILE"
                 echo "Created $TOGGLE_FILE and set to ON (extra configurations enabled)"
             fi
-            exit 0  # Exit after toggling, since this is a standalone operation
+            exit 0
             ;;
         *)
             unset_flags
@@ -89,7 +85,6 @@ echo "Preparing the build environment..."
 pushd $(dirname "$0") > /dev/null
 CORES=$(grep -c processor /proc/cpuinfo)
 
-# Define toolchain variables
 CLANG_DIR=$PWD/toolchain/neutron_18
 PATH=$CLANG_DIR/bin:$PATH
 
@@ -121,7 +116,6 @@ if [[ "$KSU_OPTION" == "y" ]]; then
     KSU=ksu.config
 fi
 
-# Function to select extra configs interactively
 select_extra_configs() {
     echo "-----------------------------------------------"
     echo "Select Extra Configurations to Merge:"
@@ -199,35 +193,32 @@ select_extra_configs() {
         esac
     done
 
-    # Save selected configs
+    # Save selected configs to file
     echo "${SELECTED_CONFIGS[@]}" > "$CONFIG_SAVE_FILE"
 }
 
-# Check the toggle file before calling the selection function
+# Handle --extra-configs selection
+if [[ "$EXTRA_CONFIGS_ENABLED" == "y" ]]; then
+    select_extra_configs  # Populates SELECTED_CONFIGS and saves to file
+fi
+
+# Initialize array and load saved configs if toggle is on (and -e wasn't used)
+SELECTED_CONFIGS=()
 if [[ -f "$TOGGLE_FILE" && $(cat "$TOGGLE_FILE") -eq 1 ]]; then
     echo "-----------------------------------------------"
-    echo "EXTRA CONFIGURATIONS: ON"
+    echo "EXTRA CONFIGURATIONS: ON (using saved selections)"
     echo "-----------------------------------------------"
-    echo "Toggle enabled: Extra configurations will be selected."
-    # Load saved configurations if they exist
-    if [[ -f "$CONFIG_SAVE_FILE" ]]; then
-        echo "Loading previously saved extra configurations..."
+    if [[ "$EXTRA_CONFIGS_ENABLED" != "y" && -f "$CONFIG_SAVE_FILE" ]]; then
         mapfile -t SELECTED_CONFIGS < "$CONFIG_SAVE_FILE"
     fi
-
-    select_extra_configs
 else
     echo "-----------------------------------------------"
     echo "EXTRA CONFIGURATIONS: OFF"
     echo "-----------------------------------------------"
-    echo "Toggle disabled: Extra configurations will be skipped."
 fi
 
-# Remove empty values from SELECTED_CONFIGS
-SELECTED_CONFIGS=($(echo "${SELECTED_CONFIGS[@]}" | tr -s ' '))
-
 echo "-----------------------------------------------"
-echo "Building kernel using "$KERNEL_DEFCONFIG""
+echo "Building kernel using $KERNEL_DEFCONFIG"
 if [[ ${#SELECTED_CONFIGS[@]} -gt 0 ]]; then
     echo "Applying extra configs:"
     for cfg in "${SELECTED_CONFIGS[@]}"; do
@@ -241,4 +232,3 @@ echo "Building kernel..."
 make ${MAKE_ARGS} -j$CORES 2>&1 | tee build.log || exit 1
 
 echo "Build finished successfully!"
-
