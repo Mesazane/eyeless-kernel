@@ -82,7 +82,7 @@ done
 
 echo "Preparing the build environment..."
 
-pushd $(dirname "$0") > /dev/null
+pushd "$(dirname "$0")" > /dev/null
 CORES=$(grep -c processor /proc/cpuinfo)
 
 # Define toolchain variables
@@ -94,8 +94,8 @@ if [ ! -f "$CLANG_DIR/bin/clang-18" ]; then
     echo "-----------------------------------------------"
     echo "Toolchain not found! Downloading..."
     echo "-----------------------------------------------"
-    rm -rf $CLANG_DIR
-    mkdir -p $CLANG_DIR
+    rm -rf "$CLANG_DIR"
+    mkdir -p "$CLANG_DIR"
     pushd toolchain/neutron_18 > /dev/null
     bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S=05012024
     echo "-----------------------------------------------"
@@ -121,6 +121,42 @@ O=out
 "
 
 KERNEL_DEFCONFIG=eyeless_"$MODEL"_defconfig
+case $MODEL in
+    x1slte)
+        BOARD=SRPSJ28B018KU
+        ;;
+    x1s)
+        BOARD=SRPSI19A018KU
+        ;;
+    y2slte)
+        BOARD=SRPSJ28A018KU
+        ;;
+    y2s)
+        BOARD=SRPSG12A018KU
+        ;;
+    z3s)
+        BOARD=SRPSI19B018KU
+        ;;
+    c1slte)
+        BOARD=SRPTC30B009KU
+        ;;
+    c1s)
+        BOARD=SRPTB27D009KU
+        ;;
+    c2slte)
+        BOARD=SRPTC30A009KU
+        ;;
+    c2s)
+        BOARD=SRPTB27C009KU
+        ;;
+    r8s)
+        BOARD=SRPTF26B014KU
+        ;;
+    *)
+        unset_flags
+        exit
+        ;;
+esac
 
 if [[ "$RECOVERY_OPTION" == "y" ]]; then
     RECOVERY=recovery.config
@@ -216,12 +252,10 @@ select_extra_configs() {
     echo "${SELECTED_CONFIGS[@]}" > "$CONFIG_SAVE_FILE"
 }
 
-# Handle --extra-configs selection
 if [[ "$EXTRA_CONFIGS_ENABLED" == "y" ]]; then
     select_extra_configs  # Populates SELECTED_CONFIGS and saves to file
 fi
 
-# Initialize array and load saved configs if toggle is on (and -e wasn't used)
 SELECTED_CONFIGS=()
 if [[ -f "$TOGGLE_FILE" && $(cat "$TOGGLE_FILE") -eq 1 ]]; then
     echo "-----------------------------------------------"
@@ -245,9 +279,11 @@ if [[ ${#SELECTED_CONFIGS[@]} -gt 0 ]]; then
     done
 fi
 
-make ${MAKE_ARGS} -j$CORES $KERNEL_DEFCONFIG "${SELECTED_CONFIGS[@]}" || exit 1
+# Fix: include the "eyeless.config" target (and any recovery or KSU options)
+make ${MAKE_ARGS} -j$CORES $KERNEL_DEFCONFIG eyeless.config "${SELECTED_CONFIGS[@]}" ${RECOVERY:-} ${KSU:-} || exit 1
 
 echo "Building kernel..."
 make ${MAKE_ARGS} -j$CORES 2>&1 | tee build.log || exit 1
 
 echo "Build finished successfully!"
+popd > /dev/null
