@@ -101,6 +101,8 @@ config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 	  governor. If unsure have a look at the help section of the
 	  driver. Fallback governor will be the performance governor.
 
+
+
 config CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 	bool "schedutil"
 	depends on SMP
@@ -177,6 +179,18 @@ config CPU_FREQ_GOV_ONDEMAND
 	  For details, take a look at linux/Documentation/cpu-freq.
 
 	  If in doubt, say N.
+
+config CPU_FREQ_GOV_PULNICE
+    tristate "'pulnice' cpufreq policy governor"
+    default y
+    help
+      Governor made for casual randomness
+
+config CPU_FREQ_DEFAULT_GOV_PULNICE
+    bool "pulnice"
+    select CPU_FREQ_GOV_PULNICE
+    help
+      Use the Pulnice CPU governor as the default.
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"
