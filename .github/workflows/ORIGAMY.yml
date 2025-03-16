@@ -1,4 +1,4 @@
-name: OVERCLOCKED BUILDER
+name: ORIGINAL BUILDER
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
           # Make the build script executable (if it's not already)
           chmod +x build_all.sh
           # Run the build script
-          ./build_all.sh -k y  -f overclocked
+          ./build_all.sh -k y  -f original
 
       - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4  # Latest stable version of artifact upload
