@@ -361,6 +361,6 @@ if [ -z "$RECOVERY" ]; then
     zip -r -qq ../"$NAME" . || exit 1
     popd > /dev/null
 fi
-
+##this is for testing
 popd > /dev/null
 echo "Build finished successfully!"
