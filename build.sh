@@ -1,366 +1,276 @@
 #!/bin/bash
+set -eo pipefail
+trap 'echo -e "\033[0;31mError at line $LINENO\033[0m"; exit 1' ERR
 
+# Configuration
 CONFIG_SAVE_FILE="saved_options_defconfig"
 TOGGLE_FILE="use_extra_configs.toggle"
+CLANG_DIR="${PWD}/toolchain/neutron_18"
+BUILD_OUT_DIR="${PWD}/build/out"
+FREQ_DIR="${PWD}/Freq"
 
-unset_flags() {
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Device models
+declare -A BOARD_MAP=(
+    [x1slte]="SRPSJ28B018KU" [x1s]="SRPSI19A018KU"
+    [y2slte]="SRPSJ28A018KU" [y2s]="SRPSG12A018KU"
+    [z3s]="SRPSI19B018KU" [c1slte]="SRPTC30B009KU"
+    [c1s]="SRPTB27D009KU" [c2slte]="SRPTC30A009KU"
+    [c2s]="SRPTB27C009KU" [r8s]="SRPTF26B014KU"
+)
+
+show_help() {
     cat << EOF
-Usage: $(basename "$0") [options]
-Options:
-    -m, --model [value]    Specify the model code of the phone
-    -k, --ksu [y/N]        Include KernelSU
-    -r, --recovery [y/N]   Compile kernel for an Android Recovery
-    -c, --ccache [y/N]     Use ccache to cache compilations
-    -f, --freq [value]     Set CPU frequency (underclocked, overclocked, original)
-    -e, --extra-configs    Enable extra configuration selection
-    --toggle               Toggle the usage of extra configurations (change between 0 and 1)
+${CYAN}Usage:${NC} $(basename "$0") [options]
+${YELLOW}Options:${NC}
+  -m, --model MODEL    Specify device model (required)
+  -k, --ksu [y/N]     Include KernelSU
+  -r, --recovery [y/N] Build for Android Recovery
+  -c, --ccache [y/N]  Use ccache
+  -f, --freq PRESET    CPU frequency (underclocked/overclocked/original)
+  -e, --extra         Enable extra configuration selection
+  --toggle            Toggle saved extra configurations
+  -h, --help          Show this help message
 EOF
+    exit 0
+}
+
+print_header() {
+    echo -e "${CYAN}"
+    echo "-----------------------------------------------"
+    echo " $1 "
+    echo "-----------------------------------------------"
+    echo -e "${NC}"
+}
+
+print_error() {
+    echo -e "${RED}Error: $1${NC}" >&2
     exit 1
 }
 
-if [[ $# -eq 0 ]]; then
-    if [[ -f "$TOGGLE_FILE" && $(cat "$TOGGLE_FILE") -eq 1 ]]; then
-        echo "-----------------------------------------------"
-        echo "EXTRA CONFIGURATIONS: ON"
-        echo "-----------------------------------------------"
-    else
-        echo "-----------------------------------------------"
-        echo "EXTRA CONFIGURATIONS: OFF"
-        echo "-----------------------------------------------"
+setup_toolchain() {
+    print_header "Toolchain Setup"
+    
+    if [ ! -f "${CLANG_DIR}/bin/clang-18" ]; then
+        echo -e "${YELLOW}Downloading Neutron toolchain...${NC}"
+        mkdir -p "${CLANG_DIR}"
+        
+        for attempt in {1..3}; do
+            curl -sL "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman" | \
+            bash -s -- -S=05012024 && break
+            echo -e "${YELLOW}Download failed, retrying (${attempt}/3)...${NC}"
+            sleep 2
+        done
+
+        echo -e "${YELLOW}Applying patches...${NC}"
+        curl -sL "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman" | \
+            bash -s -- --patch=glibc --patch=binutils
     fi
-    unset_flags
-fi
-
-EXTRA_CONFIGS_ENABLED="n"
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --model|-m)
-            MODEL="$2"
-            shift 2
-            ;;
-        --ksu|-k)
-            KSU_OPTION="$2"
-            shift 2
-            ;;
-        --recovery|-r)
-            RECOVERY_OPTION="$2"
-            shift 2
-            ;;
-        --ccache|-c)
-            CCACHE_OPTION="$2"
-            shift 2
-            ;;
-        --freq|-f)
-            FREQ_OPTION="$2"
-            shift 2
-            ;;
-        --extra-configs|-e)
-            EXTRA_CONFIGS_ENABLED="y"
-            shift
-            ;;
-        --toggle)
-            if [[ -f "$TOGGLE_FILE" ]]; then
-                if [[ $(cat "$TOGGLE_FILE") -eq 1 ]]; then
-                    echo "0" > "$TOGGLE_FILE"
-                    echo "Toggled to OFF (extra configurations disabled)"
-                else
-                    echo "1" > "$TOGGLE_FILE"
-                    echo "Toggled to ON (extra configurations enabled)"
-                fi
-            else
-                echo "1" > "$TOGGLE_FILE"
-                echo "Created $TOGGLE_FILE and set to ON (extra configurations enabled)"
-            fi
-            exit 0
-            ;;
-        *)
-            unset_flags
-            ;;
-    esac
-done
-
-echo "Preparing the build environment..."
-
-pushd "$(dirname "$0")" > /dev/null
-CORES=$(grep -c processor /proc/cpuinfo)
-
-# Define toolchain variables
-CLANG_DIR=$PWD/toolchain/neutron_18
-PATH=$CLANG_DIR/bin:$PATH
-
-# Check if toolchain exists
-if [ ! -f "$CLANG_DIR/bin/clang-18" ]; then
-    echo "-----------------------------------------------"
-    echo "Toolchain not found! Downloading..."
-    echo "-----------------------------------------------"
-    rm -rf "$CLANG_DIR"
-    mkdir -p "$CLANG_DIR"
-    pushd toolchain/neutron_18 > /dev/null
-    bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") -S=05012024
-    echo "-----------------------------------------------"
-    echo "Patching toolchain..."
-    echo "-----------------------------------------------"
-    bash <(curl -s "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman") --patch=glibc
-    echo "-----------------------------------------------"
-    echo "Cleaning up..."
-    popd > /dev/null
-fi
-
-if [[ "$CCACHE_OPTION" == "y" ]]; then
-    CCACHE=ccache
-fi
-
-MAKE_ARGS="
-LLVM=1 \
-LLVM_IAS=1 \
-ARCH=arm64 \
-CCACHE=$CCACHE \
-READELF=$CLANG_DIR/bin/llvm-readelf \
-O=out
-"
-
-KERNEL_DEFCONFIG=eyeless_"$MODEL"_defconfig
-case $MODEL in
-    x1slte)
-        BOARD=SRPSJ28B018KU
-        ;;
-    x1s)
-        BOARD=SRPSI19A018KU
-        ;;
-    y2slte)
-        BOARD=SRPSJ28A018KU
-        ;;
-    y2s)
-        BOARD=SRPSG12A018KU
-        ;;
-    z3s)
-        BOARD=SRPSI19B018KU
-        ;;
-    c1slte)
-        BOARD=SRPTC30B009KU
-        ;;
-    c1s)
-        BOARD=SRPTB27D009KU
-        ;;
-    c2slte)
-        BOARD=SRPTC30A009KU
-        ;;
-    c2s)
-        BOARD=SRPTB27C009KU
-        ;;
-    r8s)
-        BOARD=SRPTF26B014KU
-        ;;
-    *)
-        unset_flags
-        exit
-        ;;
-esac
-
-if [[ "$RECOVERY_OPTION" == "y" ]]; then
-    RECOVERY=recovery.config
-    KSU_OPTION=n
-fi
-
-if [ -z "$KSU_OPTION" ]; then
-    read -p "Include KernelSU (y/N): " KSU_OPTION
-fi
-
-if [[ "$KSU_OPTION" == "y" ]]; then
-    KSU=ksu.config
-fi
+    
+    if [ ! -f "${CLANG_DIR}/bin/llvm-readelf" ]; then
+        echo -e "${RED}Error: llvm-readelf missing from toolchain!${NC}"
+        echo -e "${YELLOW}Creating symbolic link...${NC}"
+        ln -s "${CLANG_DIR}/bin/llvm-readelf-18" "${CLANG_DIR}/bin/llvm-readelf"
+    fi
+    
+    export PATH="${CLANG_DIR}/bin:${PATH}"
+    export READELF="${CLANG_DIR}/bin/llvm-readelf"
+}
 
 select_extra_configs() {
-    echo "-----------------------------------------------"
-    echo "Select Extra Configurations to Merge:"
-    echo "-----------------------------------------------"
+    print_header "Extra Config Selection"
+    
+    local config_files=()
+    mapfile -t config_files < <(find "Extra" -name '*.config' 2>/dev/null)
+    
+    [ ${#config_files[@]} -eq 0 ] && print_error "No extra configs found in Extra/ directory"
 
-    EXTRA_DIR="Extra"
-    mapfile -t EXTRA_FILES < <(ls "$EXTRA_DIR"/*.config 2>/dev/null)
-
-    if [[ ${#EXTRA_FILES[@]} -eq 0 ]]; then
-        echo "No extra configurations found in $EXTRA_DIR"
-        return
-    fi
-
-    SELECTED_CONFIGS=()
-
-    while true; do
-        echo "Available Extra Configs:"
-        for i in "${!EXTRA_FILES[@]}"; do
-            printf "[%2d] %s\n" "$((i+1))" "$(basename "${EXTRA_FILES[$i]}")"
-        done
-        echo "[ A ] Add all"
-        echo "[ R ] Remove selected"
-        echo "[ D ] Done selecting"
-        echo "-----------------------------------------------"
-        read -p "Enter number(s) of config(s) to add/remove, 'A' to add all, 'R' to remove, or 'D' to finish: " CHOICE
-
-        case "$CHOICE" in
-            [0-9]*)
-                for num in $CHOICE; do
-                    INDEX=$((num-1))
-                    if [[ $INDEX -ge 0 && $INDEX -lt ${#EXTRA_FILES[@]} ]]; then
-                        if [[ " ${SELECTED_CONFIGS[*]} " =~ " ${EXTRA_FILES[$INDEX]} " ]]; then
-                            echo "Already added: $(basename "${EXTRA_FILES[$INDEX]}")"
-                        else
-                            SELECTED_CONFIGS+=("${EXTRA_FILES[$INDEX]}")
-                            echo "Added: $(basename "${EXTRA_FILES[$INDEX]}")"
-                        fi
-                    else
-                        echo "Invalid selection: $num"
-                    fi
-                done
-                ;;
-            A|a)
-                SELECTED_CONFIGS=("${EXTRA_FILES[@]}")
-                echo "Added all configurations!"
-                break
-                ;;
-            R|r)
-                if [[ ${#SELECTED_CONFIGS[@]} -eq 0 ]]; then
-                    echo "No configs selected yet."
-                else
-                    echo "Currently Selected Configs:"
-                    for i in "${!SELECTED_CONFIGS[@]}"; do
-                        printf "[%2d] %s\n" "$((i+1))" "$(basename "${SELECTED_CONFIGS[$i]}")"
-                    done
-                    read -p "Enter the number(s) to remove: " REMOVE_CHOICE
-                    for num in $REMOVE_CHOICE; do
-                        INDEX=$((num-1))
-                        if [[ $INDEX -ge 0 && $INDEX -lt ${#SELECTED_CONFIGS[@]} ]]; then
-                            echo "Removed: $(basename "${SELECTED_CONFIGS[$INDEX]}")"
-                            unset "SELECTED_CONFIGS[$INDEX]"
-                            SELECTED_CONFIGS=("${SELECTED_CONFIGS[@]}")
-                        else
-                            echo "Invalid selection: $num"
-                        fi
-                    done
-                fi
-                ;;
-            D|d)
-                break
-                ;;
-            *)
-                echo "Invalid option! Please select again."
-                ;;
+    PS3=$'\n'"Enter selection (multiple space-separated, A=All, D=Done): "
+    select config in "${config_files[@]}" "Done"; do
+        case $config in
+            "Done") break ;;
+            *) SELECTED_CONFIGS+=("$config") ;;
         esac
     done
 
-    # Save selected configs to file
-    echo "${SELECTED_CONFIGS[@]}" > "$CONFIG_SAVE_FILE"
+    printf "%s\n" "${SELECTED_CONFIGS[@]}" > "${CONFIG_SAVE_FILE}"
+    echo -e "${GREEN}Saved ${#SELECTED_CONFIGS[@]} configurations${NC}"
 }
 
-if [[ "$EXTRA_CONFIGS_ENABLED" == "y" ]]; then
-    select_extra_configs  # Populates SELECTED_CONFIGS and saves to file
-fi
-
-SELECTED_CONFIGS=()
-if [[ -f "$TOGGLE_FILE" && $(cat "$TOGGLE_FILE") -eq 1 ]]; then
-    echo "-----------------------------------------------"
-    echo "EXTRA CONFIGURATIONS: ON (using saved selections)"
-    echo "-----------------------------------------------"
-    if [[ "$EXTRA_CONFIGS_ENABLED" != "y" && -f "$CONFIG_SAVE_FILE" ]]; then
-        mapfile -t SELECTED_CONFIGS < "$CONFIG_SAVE_FILE"
+handle_frequency() {
+    [ -z "$FREQ_OPTION" ] && return
+    
+    print_header "CPU Frequency Configuration"
+    
+    local src_file="${FREQ_DIR}/${FREQ_OPTION}.c"
+    local dest_file="drivers/cpufreq/exynos-acme.c"
+    
+    [ ! -d "$FREQ_DIR" ] && print_error "Frequency directory not found: ${FREQ_DIR}"
+    [ ! -f "$src_file" ] && print_error "Frequency preset missing: ${src_file}"
+    
+    if ! cp -v "$src_file" "$dest_file"; then
+        print_error "Failed to copy frequency preset!"
     fi
-else
-    echo "-----------------------------------------------"
-    echo "EXTRA CONFIGURATIONS: OFF"
-    echo "-----------------------------------------------"
-fi
+    
+    echo -e "${GREEN}Applied ${FREQ_OPTION} preset to exynos-acme.c${NC}"
+}
 
-echo "-----------------------------------------------"
-echo "Building kernel using $KERNEL_DEFCONFIG"
-if [[ ${#SELECTED_CONFIGS[@]} -gt 0 ]]; then
-    echo "Applying extra configs:"
-    for cfg in "${SELECTED_CONFIGS[@]}"; do
-        echo "- $(basename "$cfg")"
-    done
-fi
+configure_ccache() {
+    [ "${CCACHE_OPTION,,}" != "y" ] && return
 
-# Build kernel configuration
-make ${MAKE_ARGS} -j$CORES $KERNEL_DEFCONFIG eyeless.config "${SELECTED_CONFIGS[@]}" ${RECOVERY:-} ${KSU:-} || exit 1
+    print_header "CCache Configuration"
+    
+    if ! command -v ccache >/dev/null; then
+        print_error "ccache is required but not installed!"
+    fi
 
-echo "Building kernel..."
-make ${MAKE_ARGS} -j$CORES 2>&1 | tee build.log || exit 1
+    export CCACHE_DIR="${PWD}/.ccache"
+    export CCACHE_SLOPPINESS="file_macro,locale,time_macros"
+    export CCACHE_MAXSIZE="5G"
+    
+    mkdir -p "${CCACHE_DIR}"
+    echo -e "${YELLOW}Cache directory: ${CCACHE_DIR}${NC}"
+    echo -e "${YELLOW}Initial cache stats:${NC}"
+    ccache --show-stats
+    
+    export CC="ccache clang"
+    export CXX="ccache clang++"
+}
 
-# --- Create output directories if they don't exist ---
-rm -rf build/out/"$MODEL"
-mkdir -p build/out/"$MODEL"/zip/files
-mkdir -p build/out/"$MODEL"/zip/META-INF/com/google/android
+build_kernel() {
+    print_header "Kernel Compilation"
+    
+    local make_args=(
+        LLVM=1
+        LLVM_IAS=1
+        ARCH=arm64
+        O=out
+        READELF="${CLANG_DIR}/bin/llvm-readelf"
+        -j$(nproc)
+    )
+    
+    # Apply configurations
+    make "${make_args[@]}" "eyeless_${MODEL}_defconfig" eyeless.config \
+        ${RECOVERY:+recovery.config} ${KSU:+ksu.config} "${SELECTED_CONFIGS[@]}"
+    
+    # Start build
+    echo -e "${CYAN}Starting compilation...${NC}"
+    time make "${make_args[@]}" 2>&1 | tee build.log
+    
+    # Show final ccache stats
+    if [ "${CCACHE_OPTION,,}" = "y" ]; then
+        echo -e "${YELLOW}Final cache stats:${NC}"
+        ccache --show-stats
+    fi
+}
 
-# Define constant variables
-DTB_PATH=build/out/"$MODEL"/dtb.img
-KERNEL_PATH=build/out/"$MODEL"/Image
-KERNEL_OFFSET=0x00008000
-DTB_OFFSET=0x00000000
-RAMDISK_OFFSET=0x01000000
-SECOND_OFFSET=0xF0000000
-TAGS_OFFSET=0x00000100
-BASE=0x10000000
-CMDLINE='androidboot.hardware=exynos990 loop.max_part=7'
-HASHTYPE=sha1
-HEADER_VERSION=2
-OS_PATCH_LEVEL=2024-05
-OS_VERSION=14.0.0
-PAGESIZE=2048
-RAMDISK=build/out/"$MODEL"/ramdisk.cpio.gz
-OUTPUT_FILE=build/out/"$MODEL"/boot.img
+package_bootimg() {
+    print_header "Creating Package"
+    
+    local output_dir="${BUILD_OUT_DIR}/${MODEL}"
+    local version=$(git describe --tags --always 2>/dev/null || date +%Y%m%d)
+    
+    # Clean and create directories
+    rm -rf "${output_dir}"
+    mkdir -p "${output_dir}/zip/files" "${output_dir}/zip/META-INF/com/google/android"
 
-## Build auxiliary boot.img files
-# Copy kernel image to output directory
-cp out/arch/arm64/boot/Image build/out/"$MODEL"/ || exit 1
+    # Original DTB/DTBO creation commands
+    echo "Building common exynos9830 Device Tree Blob Image..."
+    ./toolchain/mkdtimg cfg_create "${output_dir}/dtb.img" build/dtconfigs/exynos9830.cfg \
+        -d out/arch/arm64/boot/dts/exynos || print_error "DTB creation failed"
 
-# Build dtb
-echo "Building common exynos9830 Device Tree Blob Image..."
-echo "-----------------------------------------------"
-./toolchain/mkdtimg cfg_create build/out/"$MODEL"/dtb.img build/dtconfigs/exynos9830.cfg -d out/arch/arm64/boot/dts/exynos || exit 1
+    echo "Building Device Tree Blob Output Image for $MODEL..."
+    ./toolchain/mkdtimg cfg_create "${output_dir}/dtbo.img" build/dtconfigs/"${MODEL}".cfg \
+        -d out/arch/arm64/boot/dts/samsung || print_error "DTBO creation failed"
 
-# Build dtbo
-echo "Building Device Tree Blob Output Image for $MODEL..."
-echo "-----------------------------------------------"
-./toolchain/mkdtimg cfg_create build/out/"$MODEL"/dtbo.img build/dtconfigs/"$MODEL".cfg -d out/arch/arm64/boot/dts/samsung || exit 1
+    # Original RAMDisk and boot.img creation
+    if [ -z "$RECOVERY" ]; then
+        echo "Building RAMDisk..."
+        pushd build/ramdisk >/dev/null
+        find . ! -name . | LC_ALL=C sort | cpio -o -H newc -R root:root | gzip > "${output_dir}/ramdisk.cpio.gz"
+        popd >/dev/null
 
-if [ -z "$RECOVERY" ]; then
-    # Build ramdisk
-    echo "Building RAMDisk..."
-    echo "-----------------------------------------------"
-    pushd build/ramdisk > /dev/null
-        find . ! -name . | LC_ALL=C sort | cpio -o -H newc -R root:root | gzip > ../out/"$MODEL"/ramdisk.cpio.gz || exit 1
-    popd > /dev/null
-    echo "-----------------------------------------------"
+        echo "Creating boot image..."
+        ./toolchain/mkbootimg \
+            --kernel out/arch/arm64/boot/Image \
+            --base 0x10000000 \
+            --pagesize 2048 \
+            --board "${BOARD_MAP[$MODEL]}" \
+            --cmdline 'androidboot.hardware=exynos990 loop.max_part=7' \
+            --dtb "${output_dir}/dtb.img" \
+            --os_version "14.0.0" \
+            --os_patch_level "2024-05" \
+            --output "${output_dir}/boot.img"
+    fi
 
-    # Create boot image
-    echo "Creating boot image..."
-    echo "-----------------------------------------------"
-    ./toolchain/mkbootimg --base $BASE --board $BOARD --cmdline "$CMDLINE" --dtb $DTB_PATH \
-      --dtb_offset $DTB_OFFSET --hashtype $HASHTYPE --header_version $HEADER_VERSION --kernel $KERNEL_PATH \
-      --kernel_offset $KERNEL_OFFSET --os_patch_level $OS_PATCH_LEVEL --os_version $OS_VERSION --pagesize $PAGESIZE \
-      --ramdisk $RAMDISK --ramdisk_offset $RAMDISK_OFFSET \
-      --second_offset $SECOND_OFFSET --tags_offset $TAGS_OFFSET -o $OUTPUT_FILE || exit 1
-
-    # Build zip
+    # Original ZIP packaging
     echo "Building zip..."
-    echo "-----------------------------------------------"
-    cp build/out/"$MODEL"/boot.img build/out/"$MODEL"/zip/files/boot.img || exit 1
-    cp build/out/"$MODEL"/dtbo.img build/out/"$MODEL"/zip/files/dtbo.img || exit 1
-    cp build/update-binary build/out/"$MODEL"/zip/META-INF/com/google/android/update-binary || exit 1
-    cp build/updater-script build/out/"$MODEL"/zip/META-INF/com/google/android/updater-script || exit 1
+    cp out/arch/arm64/boot/Image "${output_dir}/zip/files"
+    cp "${output_dir}/dtbo.img" "${output_dir}/zip/files"
+    cp build/update-binary build/updater-script "${output_dir}/zip/META-INF/com/google/android"
 
-    version=$(grep -o 'CONFIG_LOCALVERSION="[^"]*"' arch/arm64/configs/eyeless.config | cut -d '"' -f 2)
-    version=${version:1}
-    pushd build/out/"$MODEL"/zip > /dev/null
-    DATE=$(date +"%d-%m-%Y_%H-%M-%S")
-
+    pushd "${output_dir}/zip" >/dev/null
+    local zip_name
     if [[ "$KSU_OPTION" == "y" ]]; then
-        NAME="$version"_"$MODEL"_UNOFFICIAL_KSU_"$DATE".zip
+        zip_name="Eyeless_${version}_${MODEL}_KSU.zip"
     else
-        NAME="$version"_"$MODEL"_UNOFFICIAL_"$DATE".zip
+        zip_name="Eyeless_${version}_${MODEL}.zip"
     fi
-    zip -r -qq ../"$NAME" . || exit 1
-    popd > /dev/null
+    zip -qr "../${zip_name}" .
+    popd >/dev/null
+
+    echo -e "${GREEN}Package created: ${output_dir}/${zip_name}${NC}"
+}
+
+# Main execution
+[[ $# -eq 0 ]] && show_help
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--model) MODEL="$2"; shift 2 ;;
+        -k|--ksu) KSU_OPTION="${2,,}"; shift 2 ;;
+        -r|--recovery) RECOVERY_OPTION="${2,,}"; shift 2 ;;
+        -c|--ccache) CCACHE_OPTION="${2,,}"; shift 2 ;;
+        -f|--freq) FREQ_OPTION="${2,,}"; shift 2 ;;
+        -e|--extra) EXTRA_CONFIGS=1; shift ;;
+        --toggle)
+            new_state=$((1 - $(<"${TOGGLE_FILE}" 2>/dev/null || echo 0)))
+            echo "${new_state}" > "${TOGGLE_FILE}"
+            echo "Toggled to $([ "${new_state}" -eq 1 ] && echo "ON" || echo "OFF")"
+            exit 0 ;;
+        -h|--help) show_help ;;
+        *) print_error "Invalid option: $1" ;;
+    esac
+done
+
+# Validate model
+[ -z "$MODEL" ] && print_error "Model parameter required!"
+[ -z "${BOARD_MAP[$MODEL]}" ] && print_error "Invalid model! Available: ${!BOARD_MAP[*]}"
+
+# Initialize environment
+setup_toolchain
+handle_frequency
+configure_ccache
+
+# Configuration handling
+[ "${RECOVERY_OPTION}" = "y" ] && RECOVERY=1
+[ "${KSU_OPTION}" = "y" ] && KSU=1
+
+if [ -n "$EXTRA_CONFIGS" ]; then
+    select_extra_configs
+elif [ -f "$TOGGLE_FILE" ] && [ $(<"$TOGGLE_FILE") -eq 1 ] && [ -f "$CONFIG_SAVE_FILE" ]; then
+    mapfile -t SELECTED_CONFIGS < "$CONFIG_SAVE_FILE"
 fi
-##this is for testing
-popd > /dev/null
-echo "Build finished successfully!"
+
+# Build process
+build_kernel
+package_bootimg
+
+echo -e "${GREEN}Build completed successfully!${NC}"
