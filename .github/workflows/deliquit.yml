@@ -3,7 +3,7 @@ name: UNDERCLOCKED BUILDER
 on:
   push:
     branches:
-      - EYELESS-Necrohphiliac
+      - EYELESS-Necrophiliac
   pull_request:
     branches:
       - EYELESS-Necrophiliac
