@@ -3,10 +3,10 @@ name: OVERCLOCKED BUILDER
 on:
   push:
     branches:
-      - EYELESS-FIXED
+      - EYELESS-NOMADIC
   pull_request:
     branches:
-      - EYELESS-FIXED
+      - EYELESS-NOMADIC
 
 jobs:
   build:
