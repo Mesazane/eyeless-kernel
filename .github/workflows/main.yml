@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - EYELESS-Necrophiliac
-  pull_request:
-    branches:
-      - EYELESS-Necrophiliac
 
 jobs:
   build:
@@ -18,7 +15,7 @@ jobs:
 
       - name: Set up the environment
         run: |
-          # Install dependencies (if necessary; customize based on your `build.sh` needs)
+          # Install dependencies (customize based on your `build.sh` needs)
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses5-dev bison flex libssl-dev \
             libelf-dev bc curl wget git python3 ccache git libarchive-tools
@@ -32,10 +29,41 @@ jobs:
           # Make the build script executable (if it's not already)
           chmod +x build_all.sh
           # Run the build script
-          ./build_all.sh -k y  -f overclocked
+          ./build_all.sh -k y -f overclocked
+
+      - name: Get Commit Info for Release
+        id: commit_info
+        run: |
+          COMMIT_MESSAGE=$(git log -1 --pretty=%s)
+          SAFE_NAME=$(echo "$COMMIT_MESSAGE Overclocked" | tr -d '\/:*?"<>|')  # Sanitize for filenames
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "artifact_name=$SAFE_NAME" >> $GITHUB_ENV
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_ENV
 
       - name: Upload Kernel Artifacts
-        uses: actions/upload-artifact@v4  # Latest stable version of artifact upload
+        uses: actions/upload-artifact@v4
         with:
-          name: kernel-artifacts
+          name: ${{ env.artifact_name }}
           path: build/out/all/*  # Upload everything inside the build/out/all directory
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Uses GitHub's built-in token for authentication
+        with:
+          tag_name: "release-${{ env.commit_hash }}"  # Tag based on commit hash
+          release_name: "${{ env.artifact_name }}"  # Release name = Commit message + "Overclocked"
+          body: "Automated build from commit: `${{ env.commit_hash }}`"
+          draft: false
+          prerelease: false
+
+      - name: Upload Kernel to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}  # Upload to the created release
+          asset_path: build/out/all/kernel.zip  # Change this to your actual built file
+          asset_name: kernel-${{ env.commit_hash }}.zip  # Filename in release
+          asset_content_type: application/zip
