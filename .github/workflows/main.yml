@@ -64,6 +64,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}  # Upload to the created release
-          asset_path: build/out/all/kernel.zip  # Change this to your actual built file
+          asset_path: build/out/all/*.zip # Change this to your actual built file
           asset_name: kernel-${{ env.commit_hash }}.zip  # Filename in release
           asset_content_type: application/zip
