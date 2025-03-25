@@ -1,4 +1,4 @@
-name: RELEASE BUILDER
+name: KERNEL BUILDER
 
 on:
   push:
@@ -34,30 +34,36 @@ jobs:
           chmod +x build_all.sh
           ./build_all.sh -k y -f original
           mkdir -p build/out/saved/original
-          for FILE in build/out/all/*.zip; do
-            DEVICE=$(echo "$FILE" | grep -oP '_\K[^_]+(?=_)')  # Extract device name
+          for DEVICE_DIR in build/out/*/; do
+            DEVICE=$(basename "$DEVICE_DIR")
+            FILE=$(find "$DEVICE_DIR" -type f -name "*.zip" | head -n 1)
+            [ -f "$FILE" ] || continue
             TIMESTAMP=$(date +"%d-%m-%Y_%H-%M-%S")
-            mv "$FILE" "build/out/saved/original/eyeless-${VERSION_NAME}-Original_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
+            cp "$FILE" "build/out/saved/original/eyeless-${VERSION_NAME}-Original_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
           done
 
       - name: Run build script for Overclocked
         run: |
           ./build_all.sh -k y -f overclocked
           mkdir -p build/out/saved/overclocked
-          for FILE in build/out/all/*.zip; do
-            DEVICE=$(echo "$FILE" | grep -oP '_\K[^_]+(?=_)')
+          for DEVICE_DIR in build/out/*/; do
+            DEVICE=$(basename "$DEVICE_DIR")
+            FILE=$(find "$DEVICE_DIR" -type f -name "*.zip" | head -n 1)
+            [ -f "$FILE" ] || continue
             TIMESTAMP=$(date +"%d-%m-%Y_%H-%M-%S")
-            mv "$FILE" "build/out/saved/overclocked/eyeless-${VERSION_NAME}-Overclocked_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
+            cp "$FILE" "build/out/saved/overclocked/eyeless-${VERSION_NAME}-Overclocked_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
           done
 
       - name: Run build script for Underclocked
         run: |
           ./build_all.sh -k y -f underclocked
           mkdir -p build/out/saved/underclocked
-          for FILE in build/out/all/*.zip; do
-            DEVICE=$(echo "$FILE" | grep -oP '_\K[^_]+(?=_)')
+          for DEVICE_DIR in build/out/*/; do
+            DEVICE=$(basename "$DEVICE_DIR")
+            FILE=$(find "$DEVICE_DIR" -type f -name "*.zip" | head -n 1)
+            [ -f "$FILE" ] || continue
             TIMESTAMP=$(date +"%d-%m-%Y_%H-%M-%S")
-            mv "$FILE" "build/out/saved/underclocked/eyeless-${VERSION_NAME}-Underclocked_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
+            cp "$FILE" "build/out/saved/underclocked/eyeless-${VERSION_NAME}-Underclocked_${DEVICE}_UNOFFICIAL_KSU_${TIMESTAMP}.zip"
           done
 
       - name: Get Commit Info
